@@ -1,0 +1,251 @@
+// #include <Wire.h>  
+// #include <PubSubClient.h>  
+// #include <WiFi.h>  
+// #include <ArduinoJson.h>
+// #include <MFRC522.h> // Include MFRC522 library
+
+// #define BUZZER_PIN 13
+// #define RST_PIN 27 
+// #define SS_PIN 5  
+
+// const char* ssid = "javid";
+// const char* password = "javid1339";
+
+// WiFiClient espClient;
+// PubSubClient client(espClient);
+
+// MFRC522 rfid(SS_PIN, RST_PIN);
+
+// void setup() {
+//   pinMode(BUZZER_PIN, OUTPUT);
+//   Serial.begin(115200); 
+//   setup_wifi();
+//   client.setServer("broker.hivemq.com", 1883);
+//   SPI.begin();
+//   rfid.PCD_Init();
+// }
+
+// void setup_wifi() {
+//   delay(10);
+//   Serial.print("Connecting to WiFi...\n");
+//   WiFi.begin(ssid, password);
+//   while (WiFi.status() != WL_CONNECTED) {
+//     Serial.print("Cannot connect to WiFi!\n");
+//     delay(500);
+//   }
+//   Serial.print("Board is connected to WiFi\n");
+// }
+
+// void loop() {
+
+//   if (!client.connected()) {
+//     reconnect();
+//   }
+
+//   client.loop();
+
+//   if (rfid.PICC_IsNewCardPresent() && rfid.PICC_ReadCardSerial()) {
+//     digitalWrite(BUZZER_PIN, HIGH);
+//     delay(500); 
+//     digitalWrite(BUZZER_PIN, LOW);
+//     String cardUID = "";
+//     for (byte i = 0; i < rfid.uid.size; i++) {
+//        cardUID += String(rfid.uid.uidByte[i] < 0x10 ? " 0" : " ");
+//        cardUID += String(rfid.uid.uidByte[i], HEX);
+//     }
+//     Serial.println("Card UID: "+cardUID);
+//     rfid.PICC_HaltA();
+    
+//     StaticJsonDocument<400> doc;
+//     doc["cardUID"] = cardUID;
+//     doc["board"] = "ESP32-WROOM";
+    
+//     String output;
+//     serializeJson(doc, output);
+
+//     Serial.println(output);
+    
+//     client.publish("esp32_attendance", output.c_str());
+//   }
+  
+//   delay(5000);
+// }
+
+// void reconnect() {
+//   while (!client.connected()) {
+//     Serial.print("Attempting MQTT connection...");
+//     if (client.connect("ESP32Client")) {
+//       Serial.println("connected");
+//     } else {
+//       Serial.print("failed, rc=");
+//       Serial.print(client.state());
+//       Serial.println(" try again in 5 seconds");
+//       delay(5000);
+//     }
+//   }
+// }
+
+// #include <Wire.h>  
+// #include <PubSubClient.h>  
+// #include <WiFi.h>  
+// #include <ArduinoJson.h>
+// #include <MFRC522.h> 
+
+// #define BUZZER_PIN 13
+// #define RST_PIN 27
+// #define SS_PIN 5
+
+// const char* ssid = "javid"; // Your WiFi SSID
+// const char* password = "javid1339"; // Your WiFi password
+
+// WiFiClient espClient;
+// PubSubClient client(espClient);
+
+// MFRC522 rfid(SS_PIN, RST_PIN);
+
+// void setup() {
+//   pinMode(BUZZER_PIN, OUTPUT);
+//   Serial.begin(115200);
+//   setup_wifi();
+//   client.setServer("broker.hivemq.com", 1883);
+// }
+
+// void setup_wifi() {
+//   delay(10);
+//   WiFi.begin(ssid, password);
+//   Serial.print("Connecting to WiFi...\n");
+//   while (WiFi.status() != WL_CONNECTED) {
+//     delay(500);
+//   }
+//   Serial.print("Board is connected to WiFi\n");
+//   SPI.begin();
+//   rfid.PCD_Init();
+// }
+
+// void loop() {
+//   if (!client.connected()) {
+//     while (!client.connect("ESP32Client")) {
+//       delay(2000);
+//     }
+//   }
+//   String str_temperature = String(random(20,35));
+//   String humidity = String(random(50,80));
+//   String cardUID = "nil";
+//   if (rfid.PICC_IsNewCardPresent() && rfid.PICC_ReadCardSerial()) {
+//     digitalWrite(BUZZER_PIN, HIGH); // turns the buzzer ON
+//     delay(700); // waits for a second
+//     digitalWrite(BUZZER_PIN, LOW);  // turns the buzzer OFF
+//     for (byte i = 0; i < rfid.uid.size; i++) {
+//        cardUID = String(rfid.uid.uidByte[i] < 0x10 ? "0" : "");
+//        cardUID += String(rfid.uid.uidByte[i], HEX);
+//     }
+//     Serial.println("Card UID: " + cardUID);
+//     rfid.PICC_HaltA();
+  
+//     StaticJsonDocument<200> doc;
+//     doc["cardUID"] = str_temperature;
+//     doc["board"] = humidity;
+//     doc["id"] = cardUID;
+//     cardUID = "nil";
+
+//     String output;
+//     serializeJson(doc, output);
+
+//     // Print the JSON to the Serial Monitor
+//     Serial.println(output);
+
+//     client.publish("esp32_arman_check", output.c_str());
+//     digitalWrite(BUZZER_PIN, HIGH); // turns the buzzer ON
+//     delay(100); // waits for a second
+//     digitalWrite(BUZZER_PIN, LOW);  // turns the buzzer OFF
+//     delay(5000);
+//   }
+// }
+
+#include <Wire.h>
+#include <SPI.h>
+#include <MFRC522.h>
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include <ArduinoJson.h>
+
+#define RST_PIN 27
+#define SS_PIN 5
+#define BUZZER_PIN 13
+
+MFRC522 mfrc522(SS_PIN, RST_PIN);  // Create MFRC522 instance
+WiFiClient espClient;
+PubSubClient client(espClient);
+long lastMsg = 0;
+char msg[50];
+int value = 0;
+
+char ssid[] = "HUAWEI P30 Pro";     // your network SSID (name)
+char pass[] = "12345678"; // your network password
+
+void setup() {
+  pinMode(BUZZER_PIN, OUTPUT);
+  Serial.begin(115200); // Initialize serial communications with the PC
+  SPI.begin();          // Init SPI bus
+  mfrc522.PCD_Init();   // Init MFRC522 
+  WiFi.begin(ssid, pass);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("\nconnected to WiFi...");
+
+  client.setServer("broker.hivemq.com", 1883);  //set MQTT broker details
+}
+
+void loop() {
+  if (!client.connected()) {
+    reconnect();
+  }
+  client.loop();
+  
+  // Look for new RFID cards
+  if ( ! mfrc522.PICC_IsNewCardPresent()) {
+    return;
+  }
+  
+  // Select one of the cards
+  if ( ! mfrc522.PICC_ReadCardSerial()) {
+    return;
+  }
+  
+  // Capture RFID tag
+  String content = "";
+  for (byte i = 0; i < mfrc522.uid.size; i++) {
+     content.concat(String(mfrc522.uid.uidByte[i] < 0x10 ? " 0" : " "));
+     content.concat(String(mfrc522.uid.uidByte[i], HEX));
+  }
+  content.toUpperCase();
+  
+  if (client.publish("esp32_arman_rfid", prepareJSON(content.c_str()))) {
+    Serial.println("Message sent successfully.");
+    digitalWrite(BUZZER_PIN, HIGH); // turns the buzzer ON
+    delay(700); // waits for a second
+    digitalWrite(BUZZER_PIN, LOW);  // turns the buzzer OFF
+  } else {
+    Serial.println("Failed to send message.");
+  }
+}
+
+void reconnect() {
+  while (!client.connected()) {
+    if (client.connect("Arman")) {
+    } else {
+      delay(5000);
+    }
+  }
+}
+
+char* prepareJSON(const char* id) {
+  StaticJsonDocument<200> doc;
+  doc["RFID"] = id;
+  serializeJson(doc, msg);
+  return msg;
+}

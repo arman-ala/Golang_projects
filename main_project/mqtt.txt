@@ -1,0 +1,255 @@
+package main
+
+import (
+	"bufio"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"strings"
+	"text/template"
+	"time"
+
+	_ "github.com/mattn/go-sqlite3"
+
+	mqtt "github.com/eclipse/paho.mqtt.golang"
+)
+
+type Rfid_card struct {
+	Student_name string
+	RFID         string `json:"RFID"`
+	Created_at   time.Time
+	LastIn       time.Time
+	LastOut      time.Time
+	National_id  string
+	Is_present   int8
+}
+
+//...mqtt setup as before...
+
+var db *sql.DB
+var form_card Rfid_card
+var cards []Rfid_card
+
+func init() {
+	var err error
+	db, err = sql.Open("sqlite3", "./DB/RFID.db")
+	if err != nil {
+		panic(err)
+	}
+}
+
+func newStudent(cardUID string) error {
+	form_card.RFID = cardUID
+	form_card.Created_at = time.Now()
+	form_card.LastIn = time.Now()
+	form_card.LastOut = time.Now()
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Print("Student's Name: ")
+	input, err := reader.ReadBytes('\n')
+	if err != nil {
+		return fmt.Errorf("Error reading student's name: ", err)
+	} else {
+		inputstr := string(input)
+		form_card.Student_name = strings.TrimSpace(inputstr)
+	}
+
+	fmt.Print("Student's National ID: ")
+	input, err = reader.ReadBytes('\n')
+	if err != nil {
+		return fmt.Errorf("Error reading student's national ID: ", err)
+	} else {
+		inputstr := string(input)
+		form_card.National_id = strings.TrimSpace(inputstr)
+	}
+	_, err = db.Exec(
+		"INSERT INTO students (cardUID, created_at, name, national_id, last_in, present) VALUES (?,?,?,?,?,?)",
+		cardUID,
+		form_card.Created_at,
+		form_card.Student_name,
+		form_card.National_id,
+		form_card.LastIn.Format("2006-01-02 15:04:05"),
+		1,
+	)
+	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			fmt.Println("The national ID already exists. Please, enter a unique national ID.")
+			fmt.Print("\n--------------------------------------------\n\n")
+		} else {
+			return fmt.Errorf("Error inserting INTO students: %s", err.Error())
+		}
+	}
+	fmt.Print("\n--------------------------------------------\n\n")
+	return nil
+}
+
+func existsDB(RFID string) (exists bool, err error) {
+	var card Rfid_card
+	card.RFID = RFID
+	row := db.QueryRow("SELECT name, national_id, created_at, cardUID, present FROM students WHERE cardUID = ?", card.RFID)
+	switch err := row.Scan(&card.Student_name, &card.National_id, &card.Created_at, &card.RFID, &card.Is_present); err {
+	case sql.ErrNoRows:
+		return false, nil
+	default:
+		return true, nil
+	}
+}
+
+func updateDB() error {
+	row := db.QueryRow("SELECT name, national_id, created_at, cardUID, present, last_in, last_out FROM students WHERE cardUID =?", form_card.RFID)
+	if err := row.Scan(
+		&form_card.Student_name,
+		&form_card.National_id,
+		&form_card.Created_at,
+		&form_card.RFID,
+		&form_card.Is_present,
+		&form_card.LastIn,
+		&form_card.LastOut,
+	); err != nil {
+		return fmt.Errorf("Error in update DB: %v", err)
+	}
+	// marshaled, err := json.MarshalIndent(form_card, "", "   ")
+	// if err != nil {
+	// 	log.Fatalf("marshaling error: %s", err)
+	// }
+	// fmt.Println("form_card:\n", string(marshaled))
+	if form_card.Is_present != 0 {
+		form_card.LastOut = time.Now()
+		_, err := db.Exec("UPDATE students SET present = 0, last_out = ? WHERE cardUID = ?", form_card.LastOut.Format("2006-01-02 15:04:05"), form_card.RFID)
+		// _, err := db.Exec("UPDATE students SET present = 0, last_out = ? WHERE cardUID = ?", form_card.lastOut, form_card.RFID)
+		if err != nil {
+			return err
+		}
+		form_card.Is_present = 0
+		// fmt.Printf("Present: %s\n", "false")
+	} else {
+		form_card.LastIn = time.Now()
+		_, err := db.Exec("UPDATE students SET present = 1, last_in = ? WHERE cardUID = ?", form_card.LastIn.Format("2006-01-02 15:04:05"), form_card.RFID)
+		// _, err := db.Exec("UPDATE students SET present = 1, last_in = ? WHERE cardUID = ?", form_card.lastIn, form_card.RFID)
+		if err != nil {
+			return err
+		}
+		form_card.Is_present = 1
+	}
+	return nil
+}
+
+func getAllCards() ([]Rfid_card, error) {
+	rows, err := db.Query("SELECT name, national_id, created_at, cardUID, last_in, last_out, present FROM students")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var cards []Rfid_card
+	for rows.Next() {
+		var card Rfid_card
+		if err := rows.Scan(&card.Student_name, &card.National_id, &card.Created_at, &card.RFID, &card.LastIn, &card.LastOut, &card.Is_present); err != nil {
+			return nil, err
+		}
+		// marshaled, err := json.MarshalIndent(card, "", "   ")
+		// if err != nil {
+		// 	log.Fatalf("marshaling error: %s", err)
+		// }
+		// fmt.Println(string(marshaled))
+		cards = append(cards, card)
+	}
+	return cards, nil
+}
+
+/*
+The function below is triggered whenever the RFID reader reads
+new card.
+The ID of the card which has 8 characters will be passed in the
+JSON format.
+The protocol of the connection is MQTT protocol.
+*/
+var messagePubHandler mqtt.MessageHandler = func(client mqtt.Client, msg mqtt.Message) {
+	/*
+		The sent JSON is unmarshalled and places its value in
+		form_card, the global variable.
+	*/
+	if err := json.Unmarshal(msg.Payload(), &form_card); err != nil {
+		fmt.Println(err)
+		return
+	}
+	/*
+		The format of string inside of the JSON is like below:
+		" 1d 44 c1 4u "
+		because of spaces we need to convert it to a 8-character
+		string without any spaces.
+	*/
+	form_card.RFID = strings.Replace(form_card.RFID, " ", "", -1)
+
+	exists, err := existsDB(form_card.RFID)
+	if err != nil {
+		log.Fatal(err)
+		fmt.Print("\n--------------------------------------------\n\n")
+		return
+	}
+	if !exists {
+		err := newStudent(form_card.RFID)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+	} else {
+		err = updateDB()
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+}
+
+func serveIndexTemplate(w http.ResponseWriter, r *http.Request) {
+	tmpl := template.Must(template.ParseFiles("./templates/index.gohtml"))
+	cardsData, err := getAllCards()
+	if err != nil {
+		log.Fatal(err)
+	}
+	tmpl.Execute(w, cardsData)
+}
+
+var connectHandler mqtt.OnConnectHandler = func(client mqtt.Client) {
+	fmt.Println("Connected")
+}
+
+var connectLostHandler mqtt.ConnectionLostHandler = func(client mqtt.Client, err error) {
+	fmt.Printf("Connect lost: %v", err)
+}
+
+func main() {
+	const broker string = "broker.hivemq.com"
+	const port int = 1883
+	opts := mqtt.NewClientOptions()
+	opts.AddBroker(fmt.Sprintf("tcp://%s:%d", broker, port))
+	opts.SetDefaultPublishHandler(messagePubHandler)
+	opts.OnConnect = connectHandler
+	opts.OnConnectionLost = connectLostHandler
+
+	client := mqtt.NewClient(opts)
+	if token := client.Connect(); token.Wait() && token.Error() != nil {
+		panic(token.Error())
+	}
+
+	sub(client)
+
+	// Start a goroutine for the HTTP server
+	go func() {
+		http.HandleFunc("/", serveIndexTemplate)
+		http.ListenAndServe(":8000", nil)
+	}()
+
+	for {
+	}
+}
+
+func sub(client mqtt.Client) {
+	topic := "esp32_arman_rfid"
+	token := client.Subscribe(topic, 0, nil)
+	token.Wait()
+	fmt.Printf("Subscribed to topic: %s\n", topic)
+	fmt.Print("--------------------------------------------\n")
+}
